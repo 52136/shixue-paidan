@@ -6,97 +6,141 @@ import shutil
 from datetime import datetime
 
 ADMIN_PASSWORD = "admin123"
-EXCEL_FILE = "paiDan_data.xlsx"
-SCREENSHOT_DIR = "screenshots"
+TASKS_FILE = "tasks.xlsx"
+CLAIMS_FILE = "claims.xlsx"
 
-# 确保截图目录存在
-if not os.path.exists(SCREENSHOT_DIR):
-    os.makedirs(SCREENSHOT_DIR)
+# ---------- 初始化文件 ----------
+def init_files():
+    if not os.path.exists(TASKS_FILE):
+        df = pd.DataFrame(columns=["任务ID", "老板名", "总数量", "总金额", "创建时间", "状态"])
+        df.to_excel(TASKS_FILE, index=False)
+    if not os.path.exists(CLAIMS_FILE):
+        df = pd.DataFrame(columns=["任务ID", "认领人", "认领数量", "认领时间"])
+        df.to_excel(CLAIMS_FILE, index=False)
 
-# ---------- 初始化数据文件 ----------
-if not os.path.exists(EXCEL_FILE):
-    df = pd.DataFrame(columns=["派单员", "送心数量", "提交提成金额", "提交时间", "截图路径"])
-    df.to_excel(EXCEL_FILE, index=False)
+init_files()
 
+# ---------- 辅助函数 ----------
+def load_tasks():
+    return pd.read_excel(TASKS_FILE)
 
-def load_data():
-    return pd.read_excel(EXCEL_FILE)
+def save_tasks(df):
+    df.to_excel(TASKS_FILE, index=False)
 
+def load_claims():
+    return pd.read_excel(CLAIMS_FILE)
 
-def save_order(paidan_ren, songxin_shuliang, ticheng_jine, tijiao_shijian, screenshot_path):
-    df = load_data()
-    new_row = pd.DataFrame({
-        "派单员": [paidan_ren],
-        "送心数量": [songxin_shuliang],
-        "提交提成金额": [ticheng_jine],
-        "提交时间": [tijiao_shijian],
-        "截图路径": [screenshot_path]
-    })
-    df = pd.concat([df, new_row], ignore_index=True)
-    df.to_excel(EXCEL_FILE, index=False)
+def save_claims(df):
+    df.to_excel(CLAIMS_FILE, index=False)
 
+def get_claimed_sum(task_id):
+    claims = load_claims()
+    claimed = claims[claims["任务ID"] == task_id]["认领数量"].sum()
+    return claimed if not claims.empty else 0
 
-def delete_all_data():
-    # 删除所有截图文件
-    if os.path.exists(SCREENSHOT_DIR):
-        shutil.rmtree(SCREENSHOT_DIR)
-        os.makedirs(SCREENSHOT_DIR)
-    df = pd.DataFrame(columns=["派单员", "送心数量", "提交提成金额", "提交时间", "截图路径"])
-    df.to_excel(EXCEL_FILE, index=False)
+def get_remaining(task_id):
+    tasks = load_tasks()
+    task = tasks[tasks["任务ID"] == task_id]
+    if task.empty:
+        return 0
+    total = task.iloc[0]["总数量"]
+    claimed = get_claimed_sum(task_id)
+    return total - claimed
 
+def generate_task_id():
+    return int(time.time())
 
-def delete_by_paidanren(paidan_ren):
-    df = load_data()
-    # 删除该派单员对应的截图文件
-    for _, row in df[df["派单员"] == paidan_ren].iterrows():
-        if pd.notna(row["截图路径"]) and row["截图路径"] != "" and os.path.exists(row["截图路径"]):
-            os.remove(row["截图路径"])
-    df = df[df["派单员"] != paidan_ren]
-    df.to_excel(EXCEL_FILE, index=False)
-
-
-def get_all_paidanren():
-    df = load_data()
-    return df["派单员"].unique().tolist() if not df.empty else []
-
-
+# ---------- 页面 ----------
 st.set_page_config(page_title="莳雪代肝派单", layout="centered")
-st.title("🌸 莳雪代肝派单")
+st.title("?? 莳雪代肝派单")
 
-option = st.sidebar.radio("选择功能", ["📝 派单员填单", "📊 管理员统计"])
+menu = st.sidebar.radio("选择功能", ["?? 创建任务", "?? 认领任务", "?? 管理员统计"])
 
-
-if option == "📝 派单员填单":
-    st.subheader("📝 提交新单")
-    with st.form("submit_form"):
-        paidan_ren = st.text_input("派单员（请填写完整昵称）")
-        songxin_shuliang = st.number_input("送心数量（❤️）", min_value=1, step=1)
-        ticheng_jine = st.number_input("提交提成金额（元）", min_value=0.0, step=0.01, format="%.2f")
-        screenshot = st.file_uploader("上传接龙截图（可选）", type=["png", "jpg", "jpeg"])
-        submitted = st.form_submit_button("✅ 提交")
+# ---------- 创建任务 ----------
+if menu == "?? 创建任务":
+    st.subheader("?? 派单员创建任务")
+    with st.form("create_task"):
+        boss = st.text_input("老板名（下单客户）")
+        total_qty = st.number_input("总送心数量", min_value=1, step=1)
+        total_amount = st.number_input("总提成金额（元）", min_value=0.0, step=0.01, format="%.2f")
+        submitted = st.form_submit_button("? 创建任务")
 
         if submitted:
-            if paidan_ren.strip() == "":
-                st.error("请填写派单员姓名")
-            elif songxin_shuliang > 0 and ticheng_jine >= 0:
-                # 处理截图
-                screenshot_path = ""
-                if screenshot is not None:
-                    timestamp = int(time.time())
-                    filename = f"{timestamp}_{screenshot.name}"
-                    save_path = os.path.join(SCREENSHOT_DIR, filename)
-                    with open(save_path, "wb") as f:
-                        f.write(screenshot.getbuffer())
-                    screenshot_path = save_path
+            if boss.strip() == "":
+                st.error("请填写老板名")
+            elif total_qty > 0:
+                task_id = generate_task_id()
+                tasks = load_tasks()
+                new_row = pd.DataFrame({
+                    "任务ID": [task_id],
+                    "老板名": [boss.strip()],
+                    "总数量": [total_qty],
+                    "总金额": [total_amount],
+                    "创建时间": [datetime.now().strftime("%Y-%m-%d %H:%M")],
+                    "状态": ["开放"]
+                })
+                tasks = pd.concat([tasks, new_row], ignore_index=True)
+                save_tasks(tasks)
+                st.success(f"? 任务已创建！任务ID: {task_id}，老板: {boss}，总??: {total_qty}")
 
-                tijiao_shijian = datetime.now().strftime("%Y-%m-%d %H:%M")
-                save_order(paidan_ren.strip(), songxin_shuliang, ticheng_jine, tijiao_shijian, screenshot_path)
-                st.success(f"✅ {paidan_ren} 的单子已提交！❤️{songxin_shuliang}，提成¥{ticheng_jine}")
+# ---------- 认领任务 ----------
+elif menu == "?? 认领任务":
+    st.subheader("?? 员工认领任务")
+    tasks = load_tasks()
+    if tasks.empty:
+        st.info("暂无待认领的任务")
+    else:
+        # 过滤出开放的任务
+        open_tasks = tasks[tasks["状态"] == "开放"]
+        if open_tasks.empty:
+            st.info("当前没有开放任务")
+        else:
+            # 构建显示选项
+            options = []
+            for _, row in open_tasks.iterrows():
+                task_id = row["任务ID"]
+                remaining = get_remaining(task_id)
+                if remaining > 0:
+                    options.append(f"{task_id} - {row['老板名']} (总??{row['总数量']}，剩余{remaining})")
+            if not options:
+                st.info("所有开放任务已被认领完")
             else:
-                st.error("数量和金额必须大于0")
+                selected = st.selectbox("选择任务", options)
+                task_id = int(selected.split(" - ")[0])
+                remaining = get_remaining(task_id)
+                st.write(f"剩余可认领数量：**{remaining}**")
 
+                with st.form("claim_form"):
+                    claimant = st.text_input("你的昵称（认领人）")
+                    claim_qty = st.number_input("认领数量（??）", min_value=1, max_value=remaining, step=1)
+                    claimed = st.form_submit_button("?? 认领")
 
-elif option == "📊 管理员统计":
+                    if claimed:
+                        if claimant.strip() == "":
+                            st.error("请填写你的昵称")
+                        elif claim_qty > remaining:
+                            st.error(f"不能超过剩余数量 {remaining}")
+                        else:
+                            claims = load_claims()
+                            new_claim = pd.DataFrame({
+                                "任务ID": [task_id],
+                                "认领人": [claimant.strip()],
+                                "认领数量": [claim_qty],
+                                "认领时间": [datetime.now().strftime("%Y-%m-%d %H:%M")]
+                            })
+                            claims = pd.concat([claims, new_claim], ignore_index=True)
+                            save_claims(claims)
+
+                            # 检查任务是否已满
+                            new_remaining = get_remaining(task_id)
+                            if new_remaining == 0:
+                                tasks.loc[tasks["任务ID"] == task_id, "状态"] = "已满"
+                                save_tasks(tasks)
+
+                            st.success(f"? {claimant} 认领了 {claim_qty}??")
+
+# ---------- 管理员统计 ----------
+elif menu == "?? 管理员统计":
     if "auth" not in st.session_state:
         st.session_state.auth = False
 
@@ -110,52 +154,47 @@ elif option == "📊 管理员统计":
             st.warning("请输入正确密码")
             st.stop()
 
-    st.subheader("📊 全团统计报表")
-    df = load_data()
+    st.subheader("?? 全团统计报表")
 
-    if df.empty:
-        st.info("暂无数据，快去填单吧")
+    claims = load_claims()
+    if claims.empty:
+        st.info("暂无认领记录")
     else:
-        summary = df.groupby("派单员").agg(
-            总送心数量=("送心数量", "sum"),
-            总提成金额=("提交提成金额", "sum"),
-            订单数=("送心数量", "count")
+        # 按认领人汇总
+        summary = claims.groupby("认领人").agg(
+            总认领数量=("认领数量", "sum"),
+            认领单数=("任务ID", "count")
         ).reset_index()
-        summary = summary.sort_values("总送心数量", ascending=False)
+        summary = summary.sort_values("总认领数量", ascending=False)
 
         st.dataframe(summary, use_container_width=True)
 
-        st.subheader("🏆 本月之星")
+        st.subheader("?? 本月之星")
         for _, row in summary.iterrows():
-            st.write(f"**{row['派单员']}**：❤️{row['总送心数量']} 颗，¥{row['总提成金额']}，共 {row['订单数']} 单")
+            st.write(f"**{row['认领人']}**：??{row['总认领数量']} 颗，共 {row['认领单数']} 单")
 
-        with st.expander("查看所有明细"):
-            # 显示表格（隐藏截图路径列）
-            st.dataframe(df.drop(columns=["截图路径"], errors="ignore"), use_container_width=True)
+        # 查看每个任务的明细
+        with st.expander("?? 任务明细"):
+            tasks = load_tasks()
+            if not tasks.empty:
+                for _, task in tasks.iterrows():
+                    task_id = task["任务ID"]
+                    st.write(f"**任务 {task_id} - 老板：{task['老板名']}**，总??{task['总数量']}，总金额￥{task['总金额']}")
+                    task_claims = claims[claims["任务ID"] == task_id]
+                    if not task_claims.empty:
+                        st.dataframe(task_claims[["认领人", "认领数量", "认领时间"]], use_container_width=True)
+                    else:
+                        st.write("暂无认领")
+                    st.write("---")
 
-            # 显示截图缩略图
-            if "截图路径" in df.columns and not df["截图路径"].isnull().all():
-                st.subheader("📸 上传的截图")
-                for _, row in df.iterrows():
-                    if pd.notna(row["截图路径"]) and row["截图路径"] != "" and os.path.exists(row["截图路径"]):
-                        st.image(row["截图路径"], caption=f"{row['派单员']} - {row['提交时间']}", width=200)
-
-    # ---------- 删除功能 ----------
-    st.subheader("🗑️ 删除记录")
-    delete_option = st.radio("选择删除方式", ["删除全部记录", "按派单员删除"])
-
-    if delete_option == "删除全部记录":
-        if st.button("⚠️ 确认删除全部数据"):
-            delete_all_data()
-            st.success("✅ 全部记录已删除")
+    # ---------- 删除功能（仅限管理员） ----------
+    st.subheader("??? 数据管理")
+    with st.expander("删除数据（谨慎操作）"):
+        if st.button("?? 删除所有任务和认领记录"):
+            if os.path.exists(TASKS_FILE):
+                os.remove(TASKS_FILE)
+            if os.path.exists(CLAIMS_FILE):
+                os.remove(CLAIMS_FILE)
+            init_files()
+            st.success("? 所有数据已清空")
             st.rerun()
-    else:
-        paidanren_list = get_all_paidanren()
-        if paidanren_list:
-            selected = st.selectbox("选择要删除的派单员", paidanren_list)
-            if st.button(f"⚠️ 确认删除 {selected} 的所有记录"):
-                delete_by_paidanren(selected)
-                st.success(f"✅ {selected} 的所有记录已删除")
-                st.rerun()
-        else:
-            st.info("暂无数据")
