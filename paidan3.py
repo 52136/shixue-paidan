@@ -19,7 +19,7 @@ def init_files():
         df = pd.DataFrame(columns=["任务ID", "派单员", "老板名", "总数量", "总金额", "创建时间", "状态", "截图路径"])
         df.to_excel(TASKS_FILE, index=False)
     if not os.path.exists(CLAIMS_FILE):
-        df = pd.DataFrame(columns=["任务ID", "认领人", "认领数量", "认领时间"])
+        df = pd.DataFrame(columns=["任务ID", "认领人", "认领数量", "认领时间", "状态"])
         df.to_excel(CLAIMS_FILE, index=False)
 
 init_files()
@@ -37,10 +37,13 @@ def load_claims():
 def save_claims(df):
     df.to_excel(CLAIMS_FILE, index=False)
 
-def get_claimed_sum(task_id):
+def get_approved_claims(task_id):
     claims = load_claims()
-    claimed = claims[claims["任务ID"] == task_id]["认领数量"].sum()
-    return claimed if not claims.empty else 0
+    return claims[(claims["任务ID"] == task_id) & (claims["状态"] == "已通过")]
+
+def get_claimed_sum(task_id):
+    approved = get_approved_claims(task_id)
+    return approved["认领数量"].sum() if not approved.empty else 0
 
 def get_remaining(task_id):
     tasks = load_tasks()
@@ -68,7 +71,6 @@ if menu == "📝 创建任务":
         boss = st.text_input("老板名（下单客户）")
         total_qty = st.number_input("总送心数量", min_value=1, step=1)
         total_amount = st.number_input("总提成金额（元）", min_value=0.0, step=0.01, format="%.2f")
-        # ！！！上传截图入口在这里 ！！！
         screenshot = st.file_uploader("上传接龙截图（仅管理员可见）", type=["png", "jpg", "jpeg"])
         submitted = st.form_submit_button("✅ 创建任务")
 
@@ -119,7 +121,6 @@ elif menu == "🙋 认领任务":
                 task_id = row["任务ID"]
                 remaining = get_remaining(task_id)
                 if remaining > 0:
-                    # 员工认领时只看到派单员和老板名，看不到截图
                     options.append(
                         f"{task_id} - {row['派单员']} - {row['老板名']} "
                         f"(总❤️{row['总数量']}，剩余{remaining})"
@@ -135,7 +136,7 @@ elif menu == "🙋 认领任务":
                 with st.form("claim_form"):
                     claimant = st.text_input("你的昵称（认领人）")
                     claim_qty = st.number_input("认领数量（❤️）", min_value=1, max_value=remaining, step=1)
-                    claimed = st.form_submit_button("🙋 认领")
+                    claimed = st.form_submit_button("🙋 提交认领申请")
 
                     if claimed:
                         if claimant.strip() == "":
@@ -143,22 +144,18 @@ elif menu == "🙋 认领任务":
                         elif claim_qty > remaining:
                             st.error(f"不能超过剩余数量 {remaining}")
                         else:
+                            # 保存认领记录，状态为“待审核”，此时数量不变
                             claims = load_claims()
                             new_claim = pd.DataFrame({
                                 "任务ID": [task_id],
                                 "认领人": [claimant.strip()],
                                 "认领数量": [claim_qty],
-                                "认领时间": [datetime.now().strftime("%Y-%m-%d %H:%M")]
+                                "认领时间": [datetime.now().strftime("%Y-%m-%d %H:%M")],
+                                "状态": ["待审核"]
                             })
                             claims = pd.concat([claims, new_claim], ignore_index=True)
                             save_claims(claims)
-
-                            new_remaining = get_remaining(task_id)
-                            if new_remaining == 0:
-                                tasks.loc[tasks["任务ID"] == task_id, "状态"] = "已满"
-                                save_tasks(tasks)
-
-                            st.success(f"✅ {claimant} 认领了 {claim_qty}❤️")
+                            st.success(f"✅ 认领申请已提交，等待管理员审核（当前剩余数量不变：{remaining}❤️）")
 
 # ---------- 管理员统计 ----------
 elif menu == "📊 管理员统计":
@@ -180,49 +177,82 @@ elif menu == "📊 管理员统计":
     claims = load_claims()
     tasks = load_tasks()
 
-    if claims.empty:
-        st.info("暂无认领记录")
+    # ---------- 审核认领 ----------
+    st.subheader("🔍 待审核认领")
+    pending_claims = claims[claims["状态"] == "待审核"]
+    if pending_claims.empty:
+        st.info("暂无待审核的认领")
     else:
-        summary = claims.groupby("认领人").agg(
+        for idx, row in pending_claims.iterrows():
+            task = tasks[tasks["任务ID"] == row["任务ID"]]
+            task_info = f"任务{row['任务ID']}" if task.empty else f"老板：{task.iloc[0]['老板名']}"
+            st.write(f"**{row['认领人']}** 认领了 **{row['认领数量']}❤️**（{task_info}）")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button(f"✅ 通过", key=f"approve_{idx}"):
+                    # 通过审核：更新认领状态
+                    claims.loc[idx, "状态"] = "已通过"
+                    save_claims(claims)
+                    # 检查任务是否已满
+                    task_id = row["任务ID"]
+                    if get_remaining(task_id) == 0:
+                        tasks.loc[tasks["任务ID"] == task_id, "状态"] = "已满"
+                        save_tasks(tasks)
+                    st.success("✅ 认领已通过，数量已扣减")
+                    st.rerun()
+            with col2:
+                if st.button(f"❌ 驳回", key=f"reject_{idx}"):
+                    claims.loc[idx, "状态"] = "已驳回"
+                    save_claims(claims)
+                    st.warning("❌ 认领已驳回")
+                    st.rerun()
+            st.write("---")
+
+    # ---------- 统计报表（只统计已通过的认领） ----------
+    approved_claims = claims[claims["状态"] == "已通过"]
+    if approved_claims.empty:
+        st.info("暂无已通过的认领记录")
+    else:
+        summary = approved_claims.groupby("认领人").agg(
             总认领数量=("认领数量", "sum"),
             认领单数=("任务ID", "count")
         ).reset_index()
         summary = summary.sort_values("总认领数量", ascending=False)
 
-        st.subheader("👤 员工排行榜")
+        st.subheader("👤 员工排行榜（已通过）")
         st.dataframe(summary, use_container_width=True)
 
         st.subheader("🏆 本月之星")
         for _, row in summary.iterrows():
             st.write(f"**{row['认领人']}**：❤️{row['总认领数量']} 颗，共 {row['认领单数']} 单")
 
+    # 派单员业绩
+    if not tasks.empty:
+        paidan_summary = tasks.groupby("派单员").agg(
+            创建任务数=("任务ID", "count"),
+            总送心量=("总数量", "sum"),
+            总金额=("总金额", "sum")
+        ).reset_index()
+        paidan_summary = paidan_summary.sort_values("总送心量", ascending=False)
+        st.subheader("📋 派单员业绩")
+        st.dataframe(paidan_summary, use_container_width=True)
+
+    # ---------- 任务明细（含截图） ----------
+    with st.expander("📋 任务明细（含截图）"):
         if not tasks.empty:
-            paidan_summary = tasks.groupby("派单员").agg(
-                创建任务数=("任务ID", "count"),
-                总送心量=("总数量", "sum"),
-                总金额=("总金额", "sum")
-            ).reset_index()
-            paidan_summary = paidan_summary.sort_values("总送心量", ascending=False)
+            for _, task in tasks.iterrows():
+                task_id = task["任务ID"]
+                st.write(f"**任务 {task_id}** | 派单员：{task['派单员']} | 老板：{task['老板名']} | 总❤️{task['总数量']} | 状态：{task['状态']}")
+                if pd.notna(task.get("截图路径", "")) and task["截图路径"] != "" and os.path.exists(task["截图路径"]):
+                    st.image(task["截图路径"], caption="接龙截图", width=200)
+                task_claims = claims[claims["任务ID"] == task_id]
+                if not task_claims.empty:
+                    st.dataframe(task_claims[["认领人", "认领数量", "认领时间", "状态"]], use_container_width=True)
+                else:
+                    st.write("暂无认领")
+                st.write("---")
 
-            st.subheader("📋 派单员业绩")
-            st.dataframe(paidan_summary, use_container_width=True)
-
-        # 任务明细（只有管理员能看到截图）
-        with st.expander("📋 任务明细（含截图）"):
-            if not tasks.empty:
-                for _, task in tasks.iterrows():
-                    task_id = task["任务ID"]
-                    st.write(f"**任务 {task_id}** | 派单员：{task['派单员']} | 老板：{task['老板名']} | 总❤️{task['总数量']} | 状态：{task['状态']}")
-                    # 管理员可见截图
-                    if pd.notna(task.get("截图路径", "")) and task["截图路径"] != "" and os.path.exists(task["截图路径"]):
-                        st.image(task["截图路径"], caption="接龙截图", width=200)
-                    task_claims = claims[claims["任务ID"] == task_id]
-                    if not task_claims.empty:
-                        st.dataframe(task_claims[["认领人", "认领数量", "认领时间"]], use_container_width=True)
-                    else:
-                        st.write("暂无认领")
-                    st.write("---")
-
+    # ---------- 删除功能 ----------
     st.subheader("🗑️ 数据管理")
     with st.expander("删除数据（谨慎操作）"):
         if st.button("⚠️ 删除所有任务和认领记录"):
