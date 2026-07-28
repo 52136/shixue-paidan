@@ -5,10 +5,7 @@ import time
 import sqlitecloud
 from datetime import datetime
 
-# ============================================================
-# 配置
-# ============================================================
-# ！！！重要：把下面引号里的内容换成你复制的连接字符串 ！！！
+# ！！！只改这一行：把引号里的内容换成你的 SQLite Cloud 连接字符串 ！！！
 DB_URL = "sqlitecloud://sqlitecloud://cta9jweevz.g6.sqlite.cloud:8860/auth.sqlitecloud?apikey=PPxxbJGFDvSf8CxjJr5Db5EvOBifx0ybZZOCB6kP35c"
 
 ADMIN_PASSWORD = "admin123"
@@ -18,9 +15,6 @@ if not os.path.exists(SCREENSHOT_DIR):
     os.makedirs(SCREENSHOT_DIR)
 
 
-# ============================================================
-# 数据库操作
-# ============================================================
 def get_connection():
     return sqlitecloud.connect(DB_URL)
 
@@ -92,9 +86,6 @@ def get_all_paidanren():
     return [row[0] for row in rows]
 
 
-# ============================================================
-# 页面
-# ============================================================
 st.set_page_config(page_title="莳雪代肝派单", layout="centered")
 st.title("🌸 莳雪代肝派单")
 
@@ -103,7 +94,6 @@ init_db()
 option = st.sidebar.radio("选择功能", ["📝 派单员填单", "📊 管理员统计"])
 
 
-# ========== 派单员填单 ==========
 if option == "📝 派单员填单":
     st.subheader("📝 提交新单")
     with st.form("submit_form"):
@@ -133,7 +123,6 @@ if option == "📝 派单员填单":
                 st.error("数量和金额必须大于0")
 
 
-# ========== 管理员统计 ==========
 elif option == "📊 管理员统计":
     if "auth" not in st.session_state:
         st.session_state.auth = False
@@ -176,7 +165,6 @@ elif option == "📊 管理员统计":
                     if pd.notna(row["截图路径"]) and row["截图路径"] != "" and os.path.exists(row["截图路径"]):
                         st.image(row["截图路径"], caption=f"{row['派单员']} - {row['提交时间']}", width=200)
 
-    # ---------- 删除功能 ----------
     st.subheader("🗑️ 删除记录")
     delete_option = st.radio("选择删除方式", ["删除全部记录", "按派单员删除"])
 
