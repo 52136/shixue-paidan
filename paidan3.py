@@ -17,13 +17,32 @@ try:
     if not os.path.exists(SCREENSHOT_DIR):
         os.makedirs(SCREENSHOT_DIR)
 
-    # ---------- 初始化文件 ----------
+    # ---------- 初始化文件（带列修复） ----------
     def init_files():
+        # 修复 tasks.xlsx
         if not os.path.exists(TASKS_FILE):
             df = pd.DataFrame(columns=["任务ID", "派单员", "老板名", "总数量", "总金额", "创建时间", "状态", "截图路径"])
             df.to_excel(TASKS_FILE, index=False)
+        else:
+            df = pd.read_excel(TASKS_FILE)
+            required_cols = ["任务ID", "派单员", "老板名", "总数量", "总金额", "创建时间", "状态", "截图路径"]
+            for col in required_cols:
+                if col not in df.columns:
+                    df[col] = ""
+            df.to_excel(TASKS_FILE, index=False)
+
+        # 修复 claims.xlsx
         if not os.path.exists(CLAIMS_FILE):
             df = pd.DataFrame(columns=["任务ID", "认领人", "认领数量", "认领时间", "状态"])
+            df.to_excel(CLAIMS_FILE, index=False)
+        else:
+            df = pd.read_excel(CLAIMS_FILE)
+            required_cols = ["任务ID", "认领人", "认领数量", "认领时间", "状态"]
+            for col in required_cols:
+                if col not in df.columns:
+                    df[col] = ""
+            if "状态" in df.columns:
+                df["状态"] = df["状态"].fillna("待审核")
             df.to_excel(CLAIMS_FILE, index=False)
 
     init_files()
