@@ -42,57 +42,68 @@ def format_name(name):
         return f"莳雪_{name}"
     return name
 
-# ---------- 接龙解析（新版） ----------
+# ---------- 接龙解析（超级容错版） ----------
 def parse_jielong(text):
-    # 清理不可见字符
-    text = re.sub(r'[\\u200b\\u200c\\u200d\\ufeff]', '', text)
+    # 1. 强硬清理不可见字符
+    text = text.encode('ascii', 'ignore').decode('ascii')
+    text = re.sub(r'[\\u200b-\\u200f\\u2028-\\u202f\\u2060-\\u206f\\ufeff]', '', text)
+    
     lines = text.strip().splitlines()
     lines = [l.strip() for l in lines if l.strip()]
-    
-    # 过滤掉以 # 开头的行
+    # 过滤以 # 开头的行
     lines = [l for l in lines if not l.startswith("#")]
+    # 过滤包含“送心员”等无关行
+    lines = [l for l in lines if "送心员" not in l and "认领人" not in l]
     
-    # 找第一行包含 ❤️ 的行作为老板行
-    boss_line = None
-    rest_lines = []
-    for line in lines:
-        if '❤️' in line and boss_line is None:
-            boss_line = line
-        else:
-            rest_lines.append(line)
-    
-    if boss_line is None:
+    if len(lines) < 1:
         return None, None, None, []
     
-    # 解析老板行
-    pattern = r'([\\u4e00-\\u9fa5]+).*?(\\d+).*?❤️'
-    match = re.search(pattern, boss_line)
+    # 2. 找老板行：优先找包含 ❤️ 的，否则找第一个同时含中文和数字的行
+    boss_line = None
+    for line in lines:
+        if '❤️' in line or '♥' in line:
+            boss_line = line
+            break
+    if not boss_line:
+        for line in lines:
+            if re.search(r'[\\u4e00-\\u9fa5]', line) and re.search(r'\\d+', line):
+                boss_line = line
+                break
+    
+    if not boss_line:
+        return None, None, None, []
+    
+    # 3. 解析老板
+    match = re.search(r'([\\u4e00-\\u9fa5]+).*?(\\d+)', boss_line)
     if not match:
         return None, None, None, []
-    
     boss_name = match.group(1).strip()
     total_qty = int(match.group(2))
     
-    # 解析认领行
+    # 4. 解析认领（从所有含编号的行）
     claims = []
-    for line in rest_lines:
-        if "送心员" in line or "认领人" in line:
-            continue
-        m_num = re.match(r'\\d+\\.\\s*', line)
-        if m_num:
-            content = line[m_num.end():].strip()
-            content = re.sub(r'[（(].*[）)]', '', content)
-            m_qty = re.search(r'(\\d+)$', content)
-            if m_qty:
-                qty = int(m_qty.group(1))
-                name = content[:m_qty.start()].strip()
-                if name:
-                    if not name.startswith("莳雪"):
-                        name = "莳雪_" + name
-                    else:
-                        name = re.sub(r'^莳雪\\s*[-_]?\\s*', '莳雪_', name)
-                    name = re.sub(r'\\s+', '_', name)
-                    claims.append((name, qty))
+    claim_lines = [l for l in lines if re.match(r'\\d+\\.\\s*', l)]
+    
+    for line in claim_lines:
+        # 去掉编号
+        content = re.sub(r'^\\d+\\.\\s*', '', line)
+        # 去掉括号注释
+        content = re.sub(r'[（(].*[）)]', '', content)
+        # 提取末尾数字作为数量
+        m_qty = re.search(r'(\\d+)$', content)
+        if m_qty:
+            qty = int(m_qty.group(1))
+            name = content[:m_qty.start()].strip()
+            # 清理多余字符，保留中文、字母、数字、点
+            name = re.sub(r'[^·\\u4e00-\\u9fa5a-zA-Z0-9]', '_', name)
+            name = re.sub(r'_+', '_', name).strip('_')
+            if name:
+                # 统一加前缀（如果已有则不再加）
+                if not name.startswith("莳雪"):
+                    name = "莳雪_" + name
+                else:
+                    name = re.sub(r'^莳雪\\s*[-_]?\\s*', '莳雪_', name)
+                claims.append((name, qty))
     
     return boss_name, total_qty, 0.0, claims
 
@@ -126,7 +137,7 @@ if menu == "📝 创建任务":
                 boss_name, total_qty, _, claims = parse_jielong(jielong_text)
                 
                 if boss_name is None:
-                    st.error("⚠️ 接龙解析失败，请检查是否包含「中文名 + 数字 + ❤️」的行")
+                    st.error("⚠️ 接龙解析失败，请检查是否包含「中文名 + 数字」的行")
                 elif not claims:
                     st.error("⚠️ 未识别到认领人员，请检查是否有「数字. 名字 数量」的行")
                 else:
