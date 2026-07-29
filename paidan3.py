@@ -37,70 +37,59 @@ def generate_task_id():
     return int(time.time())
 
 def format_name(name):
-    """统一加前缀，支持多种写法"""
+    """统一加前缀，如果已经有前缀就不重复加"""
     name = name.strip()
-    # 去除所有空格
-    name_no_space = re.sub(r'\\s+', '', name)
-    if name_no_space.startswith("莳雪"):
-        # 已经是莳雪开头，提取后缀
-        suffix = name_no_space[2:]  # 去掉"莳雪"
-        if suffix.startswith("_"):
-            suffix = suffix[1:]
-        if suffix == "":
-            return "莳雪"
-        return f"莳雪_{suffix}"
-    else:
-        return f"莳雪_{name_no_space}"
+    if not name.startswith("莳雪_"):
+        return f"莳雪_{name}"
+    return name
 
-# ---------- 接龙解析（支持多种格式） ----------
+# ---------- 接龙解析（增强版） ----------
 def parse_jielong(text):
     lines = text.strip().splitlines()
     lines = [l.strip() for l in lines if l.strip()]
     
-    if len(lines) < 3:
+    # 跳过以 # 开头的行（如 #接龙）
+    lines = [l for l in lines if not l.startswith("#")]
+    
+    if len(lines) < 2:
         return None, None, None, []
     
-    # 解析第一行：老板名板数量❤️
+    # 1. 查找第一行：包含“板”或“板续” + 数字 + ❤️
     first_line = lines[0]
-    pattern1 = r'([\\u4e00-\\u9fa5]+)板(\\d+)❤️'
-    match = re.search(pattern1, first_line)
+    pattern = r'([\\u4e00-\\u9fa5]+)板(续)?(\\d+)❤️'
+    match = re.search(pattern, first_line)
     if not match:
-        pattern2 = r'([\\u4e00-\\u9fa5]+).*?(\\d+)❤️'
-        match = re.search(pattern2, first_line)
-        if not match:
-            return None, None, None, []
+        return None, None, None, []
     
     boss_name = match.group(1).strip()
-    total_qty = int(match.group(2))
+    total_qty = int(match.group(3))
     
-    # 找到"送心员："那一行
-    claim_start = -1
-    for i, line in enumerate(lines):
-        if "送心员" in line or "认领人" in line:
-            claim_start = i + 1
-            break
-    
-    if claim_start == -1 or claim_start >= len(lines):
-        return None, None, None, []
-    
-    # 解析认领列表
+    # 2. 查找认领行：从第二行开始，寻找“数字.”开头的行
     claims = []
-    for line in lines[claim_start:]:
-        # 匹配格式：数字. 任意内容 数字（最后一个数字作为数量）
-        match = re.search(r'^\\s*\\d+\\.\\s*(.+?)\\s*(\\d+)\\s*$', line)
-        if match:
-            name_part = match.group(1).strip()
-            qty = int(match.group(2))
-            claimant = format_name(name_part)
-            claims.append((claimant, qty))
-        else:
-            # 尝试更宽松的匹配：名字 + 数字（无序号）
-            match2 = re.search(r'([\\u4e00-\\u9fa5\\s]+?)\\s*(\\d+)\\s*$', line)
-            if match2:
-                name_part = match2.group(1).strip()
-                qty = int(match2.group(2))
-                claimant = format_name(name_part)
-                claims.append((claimant, qty))
+    for line in lines[1:]:
+        # 跳过“送心员：”这类行
+        if "送心员" in line or "认领人" in line:
+            continue
+        # 匹配行首数字编号（如“1.”、“2.”）
+        match_num = re.match(r'\\d+\\.\\s*', line)
+        if match_num:
+            # 去掉编号
+            content = line[match_num.end():].strip()
+            # 去掉末尾可能的括号注释
+            content = re.sub(r'（.*）', '', content)
+            # 尝试从末尾提取数字作为数量
+            match_qty = re.search(r'(\\d+)$', content)
+            if match_qty:
+                qty = int(match_qty.group(1))
+                name = content[:match_qty.start()].strip()
+                if name:
+                    # 统一加前缀（如果已经有莳雪就不加）
+                    if not name.startswith("莳雪"):
+                        name = "莳雪_" + name
+                    else:
+                        # 如果已经包含莳雪，确保格式统一为莳雪_名字（去掉空格或连字符）
+                        name = re.sub(r'^莳雪\\s*[-_]?', '莳雪_', name)
+                    claims.append((name, qty))
     
     return boss_name, total_qty, 0.0, claims
 
@@ -120,9 +109,9 @@ if menu == "📝 创建任务":
         total_amount = st.number_input("总提成金额（元）", min_value=0.0, step=0.01, format="%.2f")
         jielong_text = st.text_area(
             "📋 粘贴结单群接龙",
-            height=250,
-            placeholder="格式示例：\\nAA板10❤️\\n送心员：\\n1.小汐5\\n2.小六5",
-            help="第一行：老板名板数量❤️\\n第二行：送心员：\\n后续行：数字.名字数量（数量必须为数字）"
+            height=300,
+            placeholder="格式示例：\\n#接龙\\n萤火虫板续100❤️\\n1. 莳雪 落2\\n2. 莳雪 阿水2",
+            help="支持 #接龙 开头、'板'或'板续'、自动识别认领人和数量"
         )
         submitted = st.form_submit_button("✅ 创建任务并自动审核")
 
@@ -136,9 +125,9 @@ if menu == "📝 创建任务":
                 
                 if boss_name is None:
                     st.error("⚠️ 接龙解析失败，请检查格式")
-                    st.info("格式示例：\\nAA板10❤️\\n送心员：\\n1.小汐5\\n2.小六5")
+                    st.info("第一行必须包含：老板名板数量❤️（如：萤火虫板续100❤️）")
                 elif not claims:
-                    st.error("⚠️ 未识别到认领人员，请检查每行是否包含数字数量")
+                    st.error("⚠️ 未识别到认领人员，请检查是否有'数字.名字数量'的行")
                 else:
                     total_claimed = sum([q for _, q in claims])
                     
