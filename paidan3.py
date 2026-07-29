@@ -5,7 +5,7 @@ import time
 import re
 from datetime import datetime
 
-ADMIN_PASSWORD = "shixue0201"
+ADMIN_PASSWORD = "admin123"
 TASKS_FILE = "tasks.xlsx"
 CLAIMS_FILE = "claims.xlsx"
 
@@ -43,53 +43,97 @@ def format_name(name):
         return f"莳雪_{name}"
     return name
 
-# ---------- 接龙解析（增强版） ----------
+# ---------- 接龙解析（调试版） ----------
 def parse_jielong(text):
+    """
+    解析接龙，带调试输出
+    """
     lines = text.strip().splitlines()
     lines = [l.strip() for l in lines if l.strip()]
     
-    # 跳过以 # 开头的行（如 #接龙）
+    debug_info = []
+    debug_info.append(f"原始行数: {len(lines)}")
+    
     lines = [l for l in lines if not l.startswith("#")]
+    debug_info.append(f"过滤#后行数: {len(lines)}")
     
     if len(lines) < 2:
+        st.error("行数不足，至少需要2行")
+        for d in debug_info:
+            st.write(d)
         return None, None, None, []
     
-    # 1. 查找第一行：包含“板”或“板续” + 数字 + ❤️
     first_line = lines[0]
-    pattern = r'([\\u4e00-\\u9fa5]+)板(续)?(\\d+)❤️'
-    match = re.search(pattern, first_line)
+    debug_info.append(f"第一行: {first_line}")
+    
+    patterns = [
+        r'([\\u4e00-\\u9fa5]+)板续?(\\d+)❤️',
+        r'([\\u4e00-\\u9fa5]+)板(\\d+)❤️',
+        r'([\\u4e00-\\u9fa5]+).*?(\\d+)❤️'
+    ]
+    
+    match = None
+    for p in patterns:
+        match = re.search(p, first_line)
+        if match:
+            debug_info.append(f"匹配模式: {p}")
+            break
+    
     if not match:
+        st.error("第一行未匹配到「老板名板数量❤️」格式")
+        st.info("示例：萤火虫板续100❤️ 或 AA板10❤️")
+        for d in debug_info:
+            st.write(d)
         return None, None, None, []
     
     boss_name = match.group(1).strip()
-    total_qty = int(match.group(3))
+    total_qty = int(match.group(2))
+    debug_info.append(f"识别老板: {boss_name}, 总数量: {total_qty}")
     
-    # 2. 查找认领行：从第二行开始，寻找“数字.”开头的行
     claims = []
-    for line in lines[1:]:
-        # 跳过“送心员：”这类行
+    for idx, line in enumerate(lines[1:], start=2):
+        debug_info.append(f"第{idx}行: {line}")
+        
         if "送心员" in line or "认领人" in line:
+            debug_info.append("  -> 跳过（标题行）")
             continue
-        # 匹配行首数字编号（如“1.”、“2.”）
+        
         match_num = re.match(r'\\d+\\.\\s*', line)
-        if match_num:
-            # 去掉编号
-            content = line[match_num.end():].strip()
-            # 去掉末尾可能的括号注释
-            content = re.sub(r'（.*）', '', content)
-            # 尝试从末尾提取数字作为数量
-            match_qty = re.search(r'(\\d+)$', content)
-            if match_qty:
-                qty = int(match_qty.group(1))
-                name = content[:match_qty.start()].strip()
-                if name:
-                    # 统一加前缀（如果已经有莳雪就不加）
-                    if not name.startswith("莳雪"):
-                        name = "莳雪_" + name
-                    else:
-                        # 如果已经包含莳雪，确保格式统一为莳雪_名字（去掉空格或连字符）
-                        name = re.sub(r'^莳雪\\s*[-_]?', '莳雪_', name)
-                    claims.append((name, qty))
+        if not match_num:
+            debug_info.append("  -> 无编号，跳过")
+            continue
+        
+        content = line[match_num.end():].strip()
+        debug_info.append(f"  -> 内容: {content}")
+        
+        content = re.sub(r'[（(].*?[）)]', '', content)
+        
+        match_qty = re.search(r'(\\d+)$', content)
+        if not match_qty:
+            debug_info.append("  -> 末尾无数字，跳过")
+            continue
+        
+        qty = int(match_qty.group(1))
+        name = content[:match_qty.start()].strip()
+        debug_info.append(f"  -> 提取名字: '{name}', 数量: {qty}")
+        
+        if name:
+            if not name.startswith("莳雪"):
+                name = "莳雪_" + name
+            else:
+                name = re.sub(r'^莳雪\\s*[-_～]?', '莳雪_', name)
+            claims.append((name, qty))
+            debug_info.append(f"  -> 最终名字: {name}")
+    
+    st.subheader("🔍 解析结果")
+    for d in debug_info:
+        st.write(f"- {d}")
+    st.write(f"共识别 {len(claims)} 位认领人")
+    
+    if claims:
+        st.write("认领列表：")
+        for name, qty in claims:
+            st.write(f"  - {name}: {qty}❤️")
     
     return boss_name, total_qty, 0.0, claims
 
