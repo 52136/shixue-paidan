@@ -42,23 +42,19 @@ def format_name(name):
         return f"莳雪_{name}"
     return name
 
-# ---------- 接龙解析（超级容错版） ----------
+# ---------- 接龙解析（简化稳妥版） ----------
 def parse_jielong(text):
-    # 1. 强硬清理不可见字符
-    text = text.encode('ascii', 'ignore').decode('ascii')
-    text = re.sub(r'[\\u200b-\\u200f\\u2028-\\u202f\\u2060-\\u206f\\ufeff]', '', text)
-    
     lines = text.strip().splitlines()
     lines = [l.strip() for l in lines if l.strip()]
     # 过滤以 # 开头的行
     lines = [l for l in lines if not l.startswith("#")]
-    # 过滤包含“送心员”等无关行
+    # 过滤无关行
     lines = [l for l in lines if "送心员" not in l and "认领人" not in l]
     
     if len(lines) < 1:
         return None, None, None, []
     
-    # 2. 找老板行：优先找包含 ❤️ 的，否则找第一个同时含中文和数字的行
+    # 找老板行：优先找含 ❤️ 的，否则找第一个含中文和数字的
     boss_line = None
     for line in lines:
         if '❤️' in line or '♥' in line:
@@ -73,32 +69,27 @@ def parse_jielong(text):
     if not boss_line:
         return None, None, None, []
     
-    # 3. 解析老板
+    # 解析老板
     match = re.search(r'([\\u4e00-\\u9fa5]+).*?(\\d+)', boss_line)
     if not match:
         return None, None, None, []
     boss_name = match.group(1).strip()
     total_qty = int(match.group(2))
     
-    # 4. 解析认领（从所有含编号的行）
+    # 解析认领：所有含编号的行
     claims = []
     claim_lines = [l for l in lines if re.match(r'\\d+\\.\\s*', l)]
-    
     for line in claim_lines:
-        # 去掉编号
         content = re.sub(r'^\\d+\\.\\s*', '', line)
-        # 去掉括号注释
         content = re.sub(r'[（(].*[）)]', '', content)
-        # 提取末尾数字作为数量
         m_qty = re.search(r'(\\d+)$', content)
         if m_qty:
             qty = int(m_qty.group(1))
             name = content[:m_qty.start()].strip()
-            # 清理多余字符，保留中文、字母、数字、点
+            # 清理多余字符
             name = re.sub(r'[^·\\u4e00-\\u9fa5a-zA-Z0-9]', '_', name)
             name = re.sub(r'_+', '_', name).strip('_')
             if name:
-                # 统一加前缀（如果已有则不再加）
                 if not name.startswith("莳雪"):
                     name = "莳雪_" + name
                 else:
